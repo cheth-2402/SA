@@ -1,0 +1,61 @@
+channels: 3
+checkpoint: -1
+checkpoint_every: 1
+dataset: BB_MMM_RGB
+ddp: true
+decay_rate: 0.5
+decay_steps: 100000
+decoder:
+  hidden_channels: 64
+  in_channels: 64
+  initial_resolution:
+  - 8
+  - 8
+  out_channels: 4
+device: 0
+dp: false
+encoder:
+  hidden_channels: 64
+  in_channels: 3
+  out_channels: 64
+epochs: 1000
+experiment_name: demo
+extras: []
+height: 50
+hidden_dim: 64
+learning_rate: 0.0004
+model: slot_attention
+num_workers: 0
+output_dir: ''
+resume: true
+resume_dir: ../experiments/slot_attention_clever6/demo/
+root: ../experiments/slot_attention_clever6/
+slot:
+  eps: 1.0e-07
+  gru:
+    hidden_dim: 64
+  hidden_dim: 64
+  hidden_dimension_kv: 64
+  input_dim: 64
+  iterations: 3
+  number_of_slots: 7
+  slot_dim: 64
+test:
+  batch_size: 16
+  data_path: null
+  rollout: 1
+  sample_number: 30
+train:
+  batch_size: 64
+  data_path:
+  - ../data/clever6/data.h5
+val:
+  batch_size: 32
+  data_path:
+  - ../data/clever6/data.h5
+  sample_number: 30
+validate_every: 100
+visualize_every: 1
+wandb: false
+warmup_steps: 10000
+width: 50
