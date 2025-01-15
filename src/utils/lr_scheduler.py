@@ -160,15 +160,80 @@ class ConstantWithWarmup:
         self.set_lr()
         self.steps += 1
 
+import math
+
+class WarmupWithExponentialDecay:
+    def __init__(self, 
+                 optimizer, 
+                 max_lr=4e-4, 
+                 min_lr=1e-6, 
+                 warmup_steps=10000, 
+                 decay_steps=100000, 
+                 decay_rate=0.5, 
+                 steps=0):
+        
+        assert optimizer, "Optimizer is required"
+        self.optimizer = optimizer
+
+        num_grps = len(self.optimizer.param_groups)
+
+        self.max_lr = [max_lr] * num_grps if isinstance(max_lr, float) else max_lr
+        self.min_lr = [min_lr] * num_grps if isinstance(min_lr, float) else min_lr
+        assert len(self.max_lr) == num_grps and len(self.min_lr) == num_grps
+
+        self.warmup_steps = warmup_steps
+        self.decay_steps = decay_steps
+        self.decay_rate = decay_rate
+        self.delta = [(max_lr_i - min_lr_i) / warmup_steps for max_lr_i, min_lr_i in zip(self.max_lr, self.min_lr)]
+        self.steps = steps
+        self.init_lr()
+
+    def init_lr(self):
+        self.step()
+
+    def set_lr(self):
+        for lr, param in zip(self.lr, self.optimizer.param_groups):
+            param['lr'] = lr
+
+    def get_last_lr(self):
+        return self.lr
+
+    def load_state_dict(self, ckpt):
+        pass 
+    
+    def state_dict(self):
+        pass 
+
+    def step(self):
+        if self.steps <= self.warmup_steps:
+            self.lr = [min_lr_i + delta_i * self.steps for min_lr_i, delta_i in zip(self.min_lr, self.delta)]
+        else:
+            decay_factor = self.decay_rate ** ((self.steps - self.warmup_steps) / self.decay_steps)
+            self.lr = [max_lr_i * decay_factor for max_lr_i in self.max_lr]
+
+        self.set_lr()
+        self.steps += 1
+
+
 def build_lr_scheduler_our(config, optimizer, train_dataloader, lr_scale_ratio):
     lr = config.optimizer.lr
     warmup_steps = config.lr_schedule_args.num_warmup_steps
-    scheduler = ConstantWithWarmup(
-        optimizer,
-        lr,
-        lr/100,
-        warmup_steps
-    )
+    decay_steps = config.lr_schedule_args.decay_steps
+    decay_rate = config.lr_schedule_args.decay_rate
+    scheduler = WarmupWithExponentialDecay(
+            optimizer=optimizer,
+            max_lr=lr,
+            min_lr=lr/100,
+            warmup_steps=warmup_steps,
+            decay_steps=decay_steps,
+            decay_rate=decay_rate
+        )
+    # scheduler = ConstantWithWarmup(
+    #     optimizer,
+    #     lr,
+    #     lr/100,
+    #     warmup_steps
+    # )
     # lr = config.optimizer.lr 
     # total_steps = config.num_epochs*(len(train_dataloader))/config.gradient_accumulation_steps
     # warmup_steps = config.lr_schedule_args.num_warmup_steps

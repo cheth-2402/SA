@@ -125,7 +125,7 @@ class SlotAttention(Module):
 
         #the slot mu and sigma
         self.mu = Parameter(torch.randn(1, 1, self.slot_dim))
-        self.sigma = Parameter(torch.zeros(1, 1, self.slot_dim))
+        self.log_sigma = Parameter(torch.zeros(1, 1, self.slot_dim))
 
         #the layer and 
         self.key = Linear(self.input_dim, self.hidden_dimension_kv, bias = False)
@@ -174,10 +174,10 @@ class SlotAttention(Module):
 
         #initalize slots as
         mu = self.mu.repeat(number_of_batches, self.number_of_slots, 1)
-        sigma = self.sigma.repeat(number_of_batches, self.number_of_slots, 1)
+        log_sigma = self.log_sigma.repeat(number_of_batches, self.number_of_slots, 1)
 
         noise = self.dist.sample((number_of_batches, self.number_of_slots, self.slot_dim)).to(self.device)
-        slots = mu + (sigma)*noise
+        slots = mu + (torch.exp(log_sigma))*noise
         
         #get the key and values from input
         

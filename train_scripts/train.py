@@ -23,6 +23,7 @@ sys.path.insert(0, str(current_file_path.parent.parent))
 from src.slot_attention import UOD
 from src.data.builder import build_dataset, build_dataloader, set_data_root
 
+from src.utils.checkpoint import save_checkpoint, load_checkpoint
 from src.utils.dist_utils import synchronize, get_world_size, clip_grad_norm_, flush
 from src.utils.logger import get_root_logger, rename_file_with_creation_time
 from src.utils.lr_scheduler import build_lr_scheduler, build_lr_scheduler_our
@@ -378,7 +379,7 @@ if __name__ == '__main__':
     if config.get('auto_lr', None):
         lr_scale_ratio = auto_scale_lr(config.train_batch_size * get_world_size() * config.gradient_accumulation_steps,
                                        config.optimizer, **config.auto_lr)
-    optimizer = build_optimizer(model, config.optimizer)
+    optimizer = build_optimizer_our(model, config.optimizer)
 
     #plot the lr 
     if accelerator.is_main_process:

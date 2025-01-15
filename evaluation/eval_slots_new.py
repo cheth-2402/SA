@@ -23,6 +23,7 @@ from pathlib import Path
 from PIL import Image, ImageFile
 import numpy as np
 import pdb
+import h5py
 
 import sys
 sys.path.insert(0, "/home/scai/phd/aiz228170/scratch/PixArt-sigma")
@@ -136,8 +137,32 @@ class SlotMetrics:
         return scalar_metrics
 
 
-
 class CLEVRTExDataset(Dataset):
+    def __init__(self, image_folder = "/home/cse/btech/cs1210561/scratch/CLEVRTEX_new/train.hdf5", image_size = 224):
+        self.image_folder = image_folder
+        self.train_images = h5py.File(image_folder, "r")
+        self.train_images = self.train_images['images'][:]
+        self.val_transform_image = transforms.Compose([
+                               transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
+        self.std = torch.tensor([0.229, 0.224, 0.225]).unsqueeze(-1).unsqueeze(-1)
+        self.mean = torch.tensor([0.485, 0.456, 0.406]).unsqueeze(-1).unsqueeze(-1)
+
+    def __len__(self):
+        return len(self.train_images)    
+    
+    def unormalize(self, images):
+        images = images*self.std.to(images.device)
+        images = images + self.mean.to(images.device)
+        return images         
+
+    def __getitem__(self, idx):
+        image = self.train_images[idx]
+        image = image.astype('float32') / 255.0
+        image = torch.tensor(image).permute(2, 0, 1)
+        image = self.val_transform_image(image)
+        return image
+
+class CLEVRTExDataset_imgs(Dataset):
     def __init__(self, image_folder, image_size = 224):
         self.image_folder = image_folder
         self.image_files = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(('.png', '.jpg'))]

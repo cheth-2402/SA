@@ -1,13 +1,12 @@
-decay_rate = 0.5
-decay_steps = 100000
+
 
 "COnfirm this!!"
 dataset = "BB_MMM_RGB"
 
 
 data_root = '/home/cse/btech/cs1210561/scratch/CLEVRTEX_new'
-train_dataset_path = '/home/cse/btech/cs1210561/scratch/CLEVRTEX_new/InternImgs'
-val_dataset_path = '/home/cse/btech/cs1210561/scratch/CLEVRTEX_val/InternImgs'
+train_dataset_path = '/home/cse/btech/cs1210561/scratch/CLEVRTEX_new/train.hdf5'
+val_dataset_path = '/home/cse/btech/cs1210561/scratch/CLEVRTEX_val/val.hdf5'
 image_list_json = ['data_info.json']
 
 #Confirm
@@ -19,7 +18,7 @@ data = dict(
     load_vae_feat=False
 )
 
-device = "cuda:0"
+device = "cuda"
 decoder = dict(
     hidden_channels= 64,
     in_channels = 64,
@@ -51,7 +50,7 @@ slot = dict(
   hidden_dimension_kv= 64,
   input_dim= 64,
   iterations= 3,
-  number_of_slots= 7,
+  number_of_slots= 9,
   slot_dim= 64
 )
 
@@ -62,10 +61,10 @@ num_epochs = 100  # 3
 gradient_accumulation_steps = 4
 grad_checkpointing = True
 gradient_clip = 0.01
-optimizer = dict(type='CAMEWrapper', lr=2e-5, weight_decay=0.0, betas=(0.9, 0.999, 0.9999), eps=(1e-30, 1e-16))
-lr_schedule_args = dict(num_warmup_steps=1000)
+optimizer = dict(type='CAMEWrapper', lr=4e-4, weight_decay=0.0, betas=(0.9, 0.999, 0.9999), eps=(1e-30, 1e-16))
+lr_schedule_args = dict(num_warmup_steps=10000,decay_rate = 0.5,decay_steps = 100000)
 #lr_schedule = 'cosine_decay_to_constant'
-lr_schedule = 'warmup_constant'
+lr_schedule = 'warmup_decay'
 
 # train = dict(
 #     batch_size= 64
@@ -81,7 +80,7 @@ log_interval = 100
 save_model_epochs = 5
 save_model_steps = 2500
 visualize = True
-eval_sampling_steps = 100
+eval_sampling_steps = 2000
 
 compute_metrics_every_n = 2000
 tracker_project_name="slot_diff_pixart"
