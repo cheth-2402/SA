@@ -219,7 +219,8 @@ def train(step):
 
             if ((i+1) % config.gradient_accumulation_steps == 0):
 
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
+                #Trying with grad clipping!
+                # grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()

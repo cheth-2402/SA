@@ -38,7 +38,7 @@ model = 'slot_attention'
 mixed_precision = 'fp16'  # ['fp16', 'fp32', 'bf16']
 fp32_attention = True
 
-work_dir = 'output/clevr_run1'
+work_dir = 'output/clevr_run2'
 
 
 slot = dict(
@@ -57,8 +57,8 @@ slot = dict(
 num_workers = 6
 train_batch_size = 64 # 48 as default
 eval_batch_size = 4
-num_epochs = 100  # 3
-gradient_accumulation_steps = 4
+num_epochs = 600  # 3
+gradient_accumulation_steps = 1
 grad_checkpointing = True
 gradient_clip = 0.01
 optimizer = dict(type='CAMEWrapper', lr=4e-4, weight_decay=0.0, betas=(0.9, 0.999, 0.9999), eps=(1e-30, 1e-16))
