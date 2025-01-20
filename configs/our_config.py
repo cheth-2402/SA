@@ -38,7 +38,7 @@ model = 'slot_attention'
 mixed_precision = 'fp16'  # ['fp16', 'fp32', 'bf16']
 fp32_attention = True
 
-work_dir = 'output/clevr_run2'
+work_dir = 'output/clevr_run_res112_ice'
 
 
 slot = dict(
@@ -55,9 +55,9 @@ slot = dict(
 )
 
 num_workers = 6
-train_batch_size = 64 # 48 as default
+train_batch_size = 32 # 48 as default
 eval_batch_size = 4
-num_epochs = 600  # 3
+num_epochs = 500  # 3
 gradient_accumulation_steps = 1
 grad_checkpointing = True
 gradient_clip = 0.01

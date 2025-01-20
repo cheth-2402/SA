@@ -240,7 +240,7 @@ class Encoder(Module):
         #the layers
         self.conv1 = Conv2d(self.in_channels, self.out_channels, (5,5), padding = 2)
         self.conv2 = Conv2d(self.out_channels, self.out_channels, (5,5), padding = 2, stride = 2)
-        self.conv3 = Conv2d(self.out_channels, self.out_channels, (5,5), padding = 2, stride = 2)
+        self.conv3 = Conv2d(self.out_channels, self.out_channels, (5,5), padding = 2, stride = 1) #Trying with stride 1
         self.conv4 = Conv2d(self.out_channels, self.out_channels, (5,5), padding = 2)
         
         #activations
@@ -253,7 +253,7 @@ class Encoder(Module):
         Returns:
             output: [B x self.out_channels x H x W ]
         '''
-        x = x.to(torch.float16)
+        # x = x.to(torch.float16)
         output = self.conv1(x)
         output = self.relu(output)
         
@@ -381,7 +381,7 @@ class UOD(Module):
         self.slot_attention = SlotAttention(self.args)
 
         #the position embeddings
-        self.encoder_final_resolution = (56, 56)
+        self.encoder_final_resolution = (112, 112)  
         self.decoder_inital_resolution = self.args['decoder']['initial_resolution']
         self.encoder_pos = PositionEmbed(self.args, self.encode_dim, self.encoder_final_resolution)        
         self.decoder_pos = PositionEmbed(self.args, self.slot_dim, self.decoder_inital_resolution)
@@ -530,5 +530,58 @@ class UOD(Module):
         slots = self.slot_attention(x).cpu().detach().numpy()
 
         return slots
+
+    def slot_to_img(self,slots):
+        '''
+        Args:
+            slots: [B x NUM_OF_SLOTS x SLOT_DIM]
+        Output:
+
+        '''  
+
+        slots = slots.to(self.device)
+        
+        # Spatial broadcast decoder.
+        # [(B x NUM_OF_SLOTS) x H_init x W_init x SLOT_DIM]
+        x = self.spatial_broadcast(slots)
+
+        #need to move channels in front
+        # [(B x NUM_OF_SLOTS) x SLOT_DIM x H_init x W_init]
+        x = x.permute(0,-1, 1, 2)
+
+        # Add positional info.
+        # [(B x NUM_OF_SLOTS) x SLOT_DIM x H_init x W_init]
+        x = self.decoder_pos(x)
+
+        #[(B x NUM_OF_SLOTS) x (CHANNELS + 1) x H x W]
+        x = self.decoder(x)
+    
+        #unstack the x
+        _, c, h, w = x.shape
+        #[ B x NUM_OF_SLOTS x (CHANNELS + 1) x H x W]
+        x = x.view(-1, self.number_of_slots, c, h, w)
+
+        #[ B x NUM_OF_SLOTS x CHANNELS x H x W]
+        #rgb image
+        recons = x[:,:,:c-1,:]
+
+        #[ B x NUM_OF_SLOTS x 1 x H x W]
+        #the mask of the image
+        masks = x[:,:,c-1:c,:]
+        masks = self.softmax(masks)
+
+        #resconstruc image
+        #[ B x NUM_OF_SLOTS x c-1 x H x W]
+        recons_image = torch.sum(recons * masks, axis=1)  # Recombine image.
+        
+        #output
+        output = {
+            "generated": recons_image,
+            "content": recons,
+            "masks": masks
+        }
+        return output
+
+
 
 

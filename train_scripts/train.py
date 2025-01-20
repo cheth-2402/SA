@@ -108,9 +108,9 @@ def log_validation(model, step, device):
     with torch.no_grad():
         torch.cuda.empty_cache()
         model = accelerator.unwrap_model(model).eval()
-
+        val_batch_size = 32
         val_dataset = CLEVRTExDataset(config.val_dataset_path,image_size = 224)
-        val_loader = DataLoader(val_dataset, sampler=None, shuffle=False, drop_last = False, batch_size=32, num_workers=config.num_workers)
+        val_loader = DataLoader(val_dataset, sampler=None, shuffle=False, drop_last = False, batch_size=val_batch_size, num_workers=config.num_workers)
         results = {}
 
         with torch.no_grad():
@@ -129,10 +129,10 @@ def log_validation(model, step, device):
         slot_masks = results['masks']
         combined_masks = slot_masks.argmax(1)[:,0]
 
-        fig, axes = plt.subplots(batch_size, 3 + config.slot["number_of_slots"], figsize=(15, 5 * batch_size))
+        fig, axes = plt.subplots(val_batch_size, 3 + config.slot["number_of_slots"], figsize=(15, 5 * val_batch_size))
 
-        for idx in range(batch_size):
-            current_row = axes[idx] if batch_size > 1 else axes  
+        for idx in range(val_batch_size):
+            current_row = axes[idx] if val_batch_size > 1 else axes  
             current_row[0].imshow(image_from_tensor(orig_images[idx]))
             current_row[0].axis('off')
             current_row[0].set_title('Original')
@@ -201,10 +201,11 @@ def train(step):
         
         for i, batch in pbar:
             model.train()
-
-            images = batch[0]
+            images = batch
             inp = {"images":images}
+
             results = model(inp)
+
             loss = results['loss']
             
 
@@ -371,10 +372,7 @@ if __name__ == '__main__':
     dataset = CLEVRTExDataset(config.train_dataset_path,image_size = 224)
 
     num_devices = accelerator.num_processes
-    batch_size = config.train_batch_size // num_devices
-    batch_size = batch_size // config.gradient_accumulation_steps
-    print(f'Batch size: {batch_size}, effective batch size: {config.train_batch_size}')
-    train_dataloader = build_dataloader(dataset, num_workers=config.num_workers, batch_size=batch_size, shuffle=True)
+    train_dataloader = build_dataloader(dataset, num_workers=config.num_workers, batch_size=config.train_batch_size, shuffle=True)
 
     lr_scale_ratio = 1
     if config.get('auto_lr', None):
