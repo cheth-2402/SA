@@ -48,28 +48,28 @@ class TrainingConfig:
     model_max_length:int = 300
     caption_channels:int = 4096
     slot_dim:int = 64
-    predict_residual = True # if true: (output_slots = input_slots + predicted_residual)
+    predict_residual:bool = True # if true: (output_slots = input_slots + predicted_residual)
 
 
     #Data
-    train_pickle_file:str = "/home/scai/phd/aiz228170/scratch/PixArt-sigma/Editor/val_data_latest.pickle"
-    val_pickle_file:str = "/home/scai/phd/aiz228170/scratch/PixArt-sigma/Editor/val_data_latest.pickle"
+    train_pickle_file:str = "/scratch/scai/phd/aiz228170/PixArt-sigma/Editor/val_data_latest_112_res.pickle"
+    val_pickle_file:str = "/scratch/scai/phd/aiz228170/PixArt-sigma/Editor/val_data_latest_112_res.pickle"
     batch_size:int = 64
     use_saved_t5:bool = True
-    num_workers=1
+    num_workers:int = 8
 
     #Training
     mixed_precision:str = 'fp16'
     report_to:str = 'wandb'
     tracker_project_name:str = 'slot_editor'
-    work_dir:str = './editor_runs/512_4_8_4_300_4096_64_64_1_1e-4_1000_on_val_debug'
+    work_dir:str = './editor_runs/512_4_8_4_300_4096_64_64_1_1e-4_1000_on_val_debug_112'
     gradient_accumulation_steps:int = 1
     use_fsdp: bool = False
     lr:float =1e-4
     num_warmup_steps:int =1000
     log_interval:int = 20
     seed:int = 0
-    num_epochs:int = 100
+    num_epochs:int = 1000
     resume_from:str = None
     gradient_clip:float = 10.0
     save_model_steps:int = 5000
@@ -82,7 +82,7 @@ class TrainingConfig:
     samples_2_show: int = 8
     image_root:str = '/home/scai/phd/aiz228170/scratch/Datasets/CIM-NLI/combined/valid' #change this if using val data for val
     config_file:str = 'configs/our_config.py'
-    checkpoint_path: str = '/scratch/cse/btech/cs1210561/SA/output/clevr_run_res112/checkpoints/epoch_468_step_524999.pth'
+    checkpoint_path: str = '/scratch/cse/btech/cs1210561/SA/output/clevr_run_res112_try/checkpoints/epoch_228_step_254999.pth'
 
 
 
@@ -227,8 +227,7 @@ def cosine_hungarian_matching_loss(outputs, targets, temperature=1.0):
 
 
 
-
-def slot_decoder_loss(output_slots, tgt_image_names, sa_model, device):
+def slot_decoder_loss(output_slots, tgt_images, sa_model, device):
     sa_model = accelerator.unwrap_model(sa_model).eval()
 
     x = sa_model.spatial_broadcast(output_slots)
@@ -242,32 +241,55 @@ def slot_decoder_loss(output_slots, tgt_image_names, sa_model, device):
     masks = sa_model.softmax(masks)
     recons_image = torch.sum(recons * masks, axis=1)
 
-    image_transform = T.Compose([
-                                T.ToTensor(),
-                                T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-                            ])
-
-    tgt_images = [
-                    image_transform(Image.open(os.path.join(val_image_root,'images_c1',k)).convert('RGB').resize((224,224))) for k in tgt_image_names
-                ]
-    tgt_tensors = torch.stack(tgt_images).to(device)
+    tgt_images = tgt_images.to(device)
 
     # assert tgt_images.shape == recons_image.shape
-    mse = ((recons_image - tgt_tensors)**2).mean()
+    mse = ((recons_image - tgt_images)**2).mean()
     return mse
 
 
 
+# def slot_decoder_loss(output_slots, tgt_image_names, sa_model, device):
+#     sa_model = accelerator.unwrap_model(sa_model).eval()
+
+#     x = sa_model.spatial_broadcast(output_slots)
+#     x = x.permute(0, -1, 1, 2)
+#     x = sa_model.decoder_pos(x)
+#     x = sa_model.decoder(x)
+#     _, c, h, w = x.shape
+#     x = x.view(-1, sa_model.number_of_slots, c, h, w)
+#     recons = x[:,:,:c-1,:]
+#     masks = x[:,:,c-1:c,:]
+#     masks = sa_model.softmax(masks)
+#     recons_image = torch.sum(recons * masks, axis=1)
+
+#     image_transform = T.Compose([
+#                                 T.ToTensor(),
+#                                 T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+#                             ])
+
+#     tgt_images = [
+#                     image_transform(Image.open(os.path.join(val_image_root,'images_c1',k)).convert('RGB').resize((224,224))) for k in tgt_image_names
+#                 ]
+#     tgt_tensors = torch.stack(tgt_images).to(device)
+
+#     # assert tgt_images.shape == recons_image.shape
+#     mse = ((recons_image - tgt_tensors)**2).mean()
+#     return mse
+
+
+
+
 class SlotDataset(Dataset):
-    def __init__(self, pickle_file):
+    def __init__(self, pickle_file, val_image_root):
         with open(pickle_file, 'rb') as f:
             data = pickle.load(f)
         self.data = data
-        # self.img_transform = T.Compose([
-        #                         T.ToTensor(),
-        #                         T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-                            # ])
-        # self.val_image_root = val_image_root
+        self.img_transform = T.Compose([
+                                T.ToTensor(),
+                                T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+                            ])
+        self.val_image_root = val_image_root
         
 
     def __len__(self):
@@ -276,20 +298,53 @@ class SlotDataset(Dataset):
     def __getitem__(self, index):
         dct = self.data[index]
 
-        # inp_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images', dct['inp_image_name'])).convert('RGB').resize((224,224)))
+        inp_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images', dct['inp_image_name'])).convert('RGB').resize((224,224)))
 
-        # out_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images_c1', dct['out_image_name'])).convert('RGB').resize((224,224)))
-
+        out_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images_c1', dct['out_image_name'])).convert('RGB').resize((224,224)))
 
         return {
-            "image_name": dct['inp_image_name'],
-            "out_image_name": dct['out_image_name'],
+            "image_name": inp_image,
+            "out_image_name": out_image,
             "edit_prompt": dct['edit_prompt'],
             "input_slots": dct['input_image_slots'],
             "output_slots": dct['output_image_slots'],
             "text_emb": dct['prompt_embedding'],
             'emb_mask': dct['embedding_mask']
         }
+
+
+# class SlotDataset(Dataset):
+    # def __init__(self, pickle_file):
+    #     with open(pickle_file, 'rb') as f:
+    #         data = pickle.load(f)
+    #     self.data = data
+    #     # self.img_transform = T.Compose([
+    #     #                         T.ToTensor(),
+    #     #                         T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    #                         # ])
+    #     # self.val_image_root = val_image_root
+        
+
+    # def __len__(self):
+    #     return len(self.data)
+
+    # def __getitem__(self, index):
+    #     dct = self.data[index]
+
+    #     # inp_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images', dct['inp_image_name'])).convert('RGB').resize((224,224)))
+
+    #     # out_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images_c1', dct['out_image_name'])).convert('RGB').resize((224,224)))
+
+
+    #     return {
+    #         "image_name": dct['inp_image_name'],
+    #         "out_image_name": dct['out_image_name'],
+    #         "edit_prompt": dct['edit_prompt'],
+    #         "input_slots": dct['input_image_slots'],
+    #         "output_slots": dct['output_image_slots'],
+    #         "text_emb": dct['prompt_embedding'],
+    #         'emb_mask': dct['embedding_mask']
+    #     }
         
 
 
@@ -332,15 +387,20 @@ def log_validation(model, vis_model, val_batch, global_step, device, samples_2_s
         y_mask = y_mask = txt_tokens.attention_mask[:, None, None]
     
 
-    inp_image_names = val_batch['image_name'][:samples_2_show]
-    out_image_names = val_batch['out_image_name'][:samples_2_show]
+    # inp_image_names = val_batch['image_name'][:samples_2_show]
+    # out_image_names = val_batch['out_image_name'][:samples_2_show]
 
-    src_images = [Image.open(os.path.join(val_image_root,'images', k)).convert('RGB').resize((224,224)) for k in inp_image_names]
-    tgt_images = [Image.open(os.path.join(val_image_root,'images_c1',k)).convert('RGB').resize((224,224)) for k in out_image_names]
+    # src_images = [Image.open(os.path.join(val_image_root,'images', k)).convert('RGB').resize((224,224)) for k in inp_image_names]
+    # tgt_images = [Image.open(os.path.join(val_image_root,'images_c1',k)).convert('RGB').resize((224,224)) for k in out_image_names]
 
-    img_stack = [np.hstack((np.asarray(og),np.asarray(tgt))) for og,tgt in zip(src_images, tgt_images)]
+    # img_stack = [np.hstack((np.asarray(og),np.asarray(tgt))) for og,tgt in zip(src_images, tgt_images)]
 
-    # print(len(img_stack), len(inp_image_names), input_slots.shape, y.shape, y_mask.shape)
+
+    src_images = unnormalize(val_batch['image_name'][:samples_2_show])
+    tgt_images = unnormalize(val_batch['out_image_name'][:samples_2_show])
+
+    img_stack = [np.hstack((np.asarray(image_from_tensor(og)),np.asarray(image_from_tensor(tgt)))) for og,tgt in zip(src_images, tgt_images)]
+
 
     output_slots = model(input_slots, y, y_mask)
     if config.predict_residual:
@@ -565,8 +625,8 @@ if __name__ == '__main__':
         print(f"Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad):}")
 
 
-    train_ds = SlotDataset(config.train_pickle_file)
-    val_ds = SlotDataset(config.train_pickle_file)
+    train_ds = SlotDataset(config.train_pickle_file, config.image_root)
+    val_ds = SlotDataset(config.train_pickle_file, config.image_root)
 
     train_dl = DataLoader(train_ds, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers)
     val_dl = DataLoader(val_ds, batch_size=config.batch_size, shuffle=False, num_workers=1)
