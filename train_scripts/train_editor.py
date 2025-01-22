@@ -48,6 +48,7 @@ class TrainingConfig:
     model_max_length:int = 300
     caption_channels:int = 4096
     slot_dim:int = 64
+    predict_residual = True # if true: (output_slots = input_slots + predicted_residual)
 
 
     #Data
@@ -409,6 +410,8 @@ def train():
             with accelerator.accumulate(model):
                 optimizer.zero_grad()
                 output_slots = model(input_slots, y, y_mask)
+                if config.predict_residual:
+                    output_slots = input_slots + output_slots
                 # print(input_slots.shape, output_slots.shape, target_slots.shape)
                 loss_term = cosine_hungarian_matching_loss(output_slots, target_slots)
                 dec_loss = slot_decoder_loss(output_slots, batch['out_image_name'], sa_model, accelerator.device)
