@@ -156,7 +156,6 @@ class SlotEditor(nn.Module):
 
         x = self.x_embedder(x)
         y = self.y_embedder(y)
-
         if mask is not None:
             if mask.shape[0] != y.shape[0]:
                 mask = mask.repeat(y.shape[0] // mask.shape[0], 1)

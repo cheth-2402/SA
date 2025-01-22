@@ -28,6 +28,8 @@ from src.utils.misc import read_config
 from src.slot_attention import UOD
 
 from diffusers import get_cosine_schedule_with_warmup, get_constant_schedule_with_warmup
+import torchvision.transforms as T
+
 
 import datetime
 import pickle
@@ -59,7 +61,7 @@ class TrainingConfig:
     mixed_precision:str = 'fp16'
     report_to:str = 'wandb'
     tracker_project_name:str = 'slot_editor'
-    work_dir:str = './editor_runs/512_4_8_4_300_4096_64_64_1_1e-4_1000_on_val'
+    work_dir:str = './editor_runs/512_4_8_4_300_4096_64_64_1_1e-4_1000_on_val_debug'
     gradient_accumulation_steps:int = 1
     use_fsdp: bool = False
     lr:float =1e-4
@@ -225,11 +227,46 @@ def cosine_hungarian_matching_loss(outputs, targets, temperature=1.0):
 
 
 
+def slot_decoder_loss(output_slots, tgt_image_names, sa_model, device):
+    sa_model = accelerator.unwrap_model(sa_model).eval()
+
+    x = sa_model.spatial_broadcast(output_slots)
+    x = x.permute(0, -1, 1, 2)
+    x = sa_model.decoder_pos(x)
+    x = sa_model.decoder(x)
+    _, c, h, w = x.shape
+    x = x.view(-1, sa_model.number_of_slots, c, h, w)
+    recons = x[:,:,:c-1,:]
+    masks = x[:,:,c-1:c,:]
+    masks = sa_model.softmax(masks)
+    recons_image = torch.sum(recons * masks, axis=1)
+
+    image_transform = T.Compose([
+                                T.ToTensor(),
+                                T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+                            ])
+
+    tgt_images = [
+                    image_transform(Image.open(os.path.join(val_image_root,'images_c1',k)).convert('RGB').resize((224,224))) for k in tgt_image_names
+                ]
+    tgt_tensors = torch.stack(tgt_images).to(device)
+
+    # assert tgt_images.shape == recons_image.shape
+    mse = ((recons_image - tgt_tensors)**2).mean()
+    return mse
+
+
+
 class SlotDataset(Dataset):
     def __init__(self, pickle_file):
         with open(pickle_file, 'rb') as f:
             data = pickle.load(f)
         self.data = data
+        # self.img_transform = T.Compose([
+        #                         T.ToTensor(),
+        #                         T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+                            # ])
+        # self.val_image_root = val_image_root
         
 
     def __len__(self):
@@ -237,6 +274,11 @@ class SlotDataset(Dataset):
 
     def __getitem__(self, index):
         dct = self.data[index]
+
+        # inp_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images', dct['inp_image_name'])).convert('RGB').resize((224,224)))
+
+        # out_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images_c1', dct['out_image_name'])).convert('RGB').resize((224,224)))
+
 
         return {
             "image_name": dct['inp_image_name'],
@@ -261,15 +303,18 @@ def unnormalize(images):
 
 
 @torch.inference_mode()
-def log_validation(model, cfg, val_batch, global_step, device, samples_2_show=4, text_encoder=None, tokenizer=None):
+def log_validation(model, vis_model, val_batch, global_step, device, samples_2_show=4, text_encoder=None, tokenizer=None):
+    print("Logging Visualization")
     torch.cuda.empty_cache()
     model = accelerator.unwrap_model(model).eval()
-    config = read_config(cfg.config_file)
-    vis_model = UOD(config)
+    vis_model = accelerator.unwrap_model(vis_model).eval()
 
-    checkpoint = torch.load(cfg.checkpoint_path)
-    vis_model.load_state_dict(checkpoint['state_dict'])
-    vis_model = vis_model.eval().to(device)
+    # config = read_config(cfg.config_file)
+    # vis_model = UOD(config)
+
+    # checkpoint = torch.load(cfg.checkpoint_path)
+    # vis_model.load_state_dict(checkpoint['state_dict'])
+    # vis_model = vis_model.eval().to(device)
 
 
     input_slots = val_batch['input_slots'][:samples_2_show].to(device)
@@ -289,7 +334,6 @@ def log_validation(model, cfg, val_batch, global_step, device, samples_2_show=4,
     inp_image_names = val_batch['image_name'][:samples_2_show]
     out_image_names = val_batch['out_image_name'][:samples_2_show]
 
-
     src_images = [Image.open(os.path.join(val_image_root,'images', k)).convert('RGB').resize((224,224)) for k in inp_image_names]
     tgt_images = [Image.open(os.path.join(val_image_root,'images_c1',k)).convert('RGB').resize((224,224)) for k in out_image_names]
 
@@ -303,7 +347,10 @@ def log_validation(model, cfg, val_batch, global_step, device, samples_2_show=4,
     torch.cuda.empty_cache()
 
     dec_output = vis_model.slot_to_img(output_slots)
+    dec_img_gt_slots =  vis_model.slot_to_img(target_slots)
+
     gen_tensor = unnormalize(dec_output['generated'])
+    gt_gen_tensor = unnormalize(dec_img_gt_slots['generated'])
     
     bs = output_slots.shape[0]
     num_slots = output_slots.shape[1]
@@ -314,9 +361,10 @@ def log_validation(model, cfg, val_batch, global_step, device, samples_2_show=4,
             formatted_images = []
             for idx in range(bs):
                 istack = img_stack[idx]
+                gt_reconstructed_image = image_from_tensor(gt_gen_tensor[idx])
                 image_reconstructed = image_from_tensor(gen_tensor[idx])
                 slot_masks = np.hstack([Image.fromarray((dec_output['masks'][idx][k].squeeze().cpu().detach().numpy()*255).astype(np.uint8)).convert('RGB') for k in range(num_slots)])
-                final_img = np.hstack((istack, image_reconstructed, slot_masks))
+                final_img = np.hstack((istack, gt_reconstructed_image, image_reconstructed, slot_masks))
                 image = wandb.Image(final_img, caption=val_batch['edit_prompt'][idx])
                 formatted_images.append(image)
             tracker.log({"validation": formatted_images})
@@ -363,7 +411,9 @@ def train():
                 output_slots = model(input_slots, y, y_mask)
                 # print(input_slots.shape, output_slots.shape, target_slots.shape)
                 loss_term = cosine_hungarian_matching_loss(output_slots, target_slots)
-                accelerator.backward(loss_term)
+                dec_loss = slot_decoder_loss(output_slots, batch['out_image_name'], sa_model, accelerator.device)
+                total_loss = loss_term + dec_loss
+                accelerator.backward(total_loss)
                 if accelerator.sync_gradients:
                     grad_norm = accelerator.clip_grad_norm_(model.parameters(), config.gradient_clip)
                 optimizer.step()
@@ -371,7 +421,9 @@ def train():
         
             lr = lr_scheduler.get_last_lr()[0]
             logs = {
-                "loss": accelerator.gather(loss_term).mean().item(),
+                "total_loss": accelerator.gather(total_loss).mean().item(),
+                "hungarian_loss": accelerator.gather(loss_term).mean().item(),
+                "decoder_mse": accelerator.gather(dec_loss).mean().item()
             }
             if grad_norm is not None:
                 logs.update(grad_norm=accelerator.gather(grad_norm).mean().item())
@@ -388,7 +440,8 @@ def train():
 
 
                 info += ', '.join([f"{k}:{v:.4f}" for k, v in log_buffer.output.items()])
-                print(info)
+                if accelerator.is_main_process:
+                    print(info)
                 last_tic = time.time()
                 log_buffer.clear()
                 data_time_all = 0
@@ -398,9 +451,10 @@ def train():
             data_time_start = time.time()
 
 
-            if config.save_model_steps and global_step % config.save_model_steps == 0:
+            if global_step % config.save_model_steps == 0:
                 accelerator.wait_for_everyone()
                 if accelerator.is_main_process:
+                    print(f'Reached {global_step} steps: Saving checkpoint')
                     os.umask(0o000)
                     save_checkpoint(os.path.join(config.work_dir, 'checkpoints'),
                                         epoch=epoch,
@@ -413,7 +467,7 @@ def train():
             if config.visualize and (global_step % config.eval_sampling_steps == 0 or (step+1) == 1):
                 accelerator.wait_for_everyone()
                 if accelerator.is_main_process:
-                    log_validation(model, config, val_batch, global_step, device=accelerator.device, samples_2_show=4, text_encoder=text_encoder, tokenizer=tokenizer)
+                    log_validation(model, sa_model, val_batch, global_step, device=accelerator.device, samples_2_show=4, text_encoder=text_encoder, tokenizer=tokenizer)
 
         if epoch % config.save_model_epochs == 0 or epoch == config.num_epochs:
             accelerator.wait_for_everyone()
@@ -487,6 +541,16 @@ if __name__ == '__main__':
             )
 
 
+    sa_config = read_config(config.config_file)
+    sa_model = UOD(sa_config)
+
+    ckpt = torch.load(config.checkpoint_path)
+    sa_model.load_state_dict(ckpt['state_dict'])
+    for param in sa_model.parameters():
+        param.requires_grad = False
+
+
+
     if not config.use_saved_t5:
         tokenizer = T5Tokenizer.from_pretrained(config.pipeline_load_from, subfolder="tokenizer")
         text_encoder = T5EncoderModel.from_pretrained(
@@ -508,8 +572,8 @@ if __name__ == '__main__':
 
     if hasattr(model, 'module'):
         model = model.module
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
-
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+ 
 
     lr_scheduler = get_constant_schedule_with_warmup(
             optimizer=optimizer,
@@ -545,7 +609,7 @@ if __name__ == '__main__':
         print(f'Unexpected keys: {unexpected}')
 
 
-    model = accelerator.prepare(model)
+    model, sa_model = accelerator.prepare(model, sa_model)
     optimizer, train_dl, val_dl, lr_scheduler = accelerator.prepare(optimizer, train_dl, val_dl, lr_scheduler)
     train()
 
