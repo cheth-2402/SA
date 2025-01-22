@@ -343,6 +343,8 @@ def log_validation(model, vis_model, val_batch, global_step, device, samples_2_s
     # print(len(img_stack), len(inp_image_names), input_slots.shape, y.shape, y_mask.shape)
 
     output_slots = model(input_slots, y, y_mask)
+    if config.predict_residual:
+        output_slots  = input_slots + output_slots
     # print(output_slots.shape)
 
     torch.cuda.empty_cache()
@@ -412,7 +414,6 @@ def train():
                 output_slots = model(input_slots, y, y_mask)
                 if config.predict_residual:
                     output_slots = input_slots + output_slots
-                # print(input_slots.shape, output_slots.shape, target_slots.shape)
                 loss_term = cosine_hungarian_matching_loss(output_slots, target_slots)
                 dec_loss = slot_decoder_loss(output_slots, batch['out_image_name'], sa_model, accelerator.device)
                 total_loss = loss_term + dec_loss
