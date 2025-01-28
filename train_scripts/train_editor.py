@@ -220,11 +220,16 @@ def cosine_hungarian_matching_loss(outputs, targets, temperature=1.0):
     col_indices = torch.tensor(np.array(col_i), device=C.device)
     num_indices = row_indices.size(1)
     batch_indices = torch.arange(bs).unsqueeze(1).expand(-1,num_indices).to(C.device)
-    values = C[batch_indices, row_indices, batch_indices, col_indices]
-    # scaling b/w [0,1]
-    loss_val = (values.mean() + 1.)/2
-    return loss_val
 
+    
+    permuted_slots = outputs[batch_indices, row_indices, :]
+    loss_val = ((permuted_slots-targets)**2).mean()
+
+    # values = C[batch_indices, row_indices, batch_indices, col_indices]
+    # scaling b/w [0,1]
+    # loss_val = (values.mean() + 1.)/2
+
+    return loss_val
 
 
 def slot_decoder_loss(output_slots, tgt_images, sa_model, device):

@@ -11,6 +11,7 @@ wandb/
 editor_runs/
 
 image_slots_data.pkl
+image_slots_val_dump.pkl
 
 # Distribution / packaging
 .Python

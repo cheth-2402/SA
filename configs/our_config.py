@@ -38,7 +38,7 @@ model = 'slot_attention'
 mixed_precision = 'fp16'  # ['fp16', 'fp32', 'bf16']
 fp32_attention = True
 
-work_dir = 'output/clevr_run_res112_ice'
+work_dir = 'output/clevr_run_res112_try_cont'
 
 
 slot = dict(
