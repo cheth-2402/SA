@@ -27,6 +27,8 @@ from train_scripts.train import image_from_tensor, create_colored_combined_mask,
 from src.utils.misc import read_config
 from src.slot_attention import UOD
 
+from src.editor.lr import get_cosine_annealing_warmup_restarts
+
 from diffusers import get_cosine_schedule_with_warmup, get_constant_schedule_with_warmup
 import torchvision.transforms as T
 
@@ -52,37 +54,38 @@ class TrainingConfig:
 
 
     #Data
-    train_pickle_file:str = "/scratch/scai/phd/aiz228170/PixArt-sigma/Editor/val_data_latest_112_res.pickle"
-    val_pickle_file:str = "/scratch/scai/phd/aiz228170/PixArt-sigma/Editor/val_data_latest_112_res.pickle"
-    batch_size:int = 64
-    use_saved_t5:bool = True
+    train_pickle_file:str = "/home/cse/btech/cs1210561/scratch/SA/output/clevr_run_res112_try_cont/train_data_latest_wo_112_res_cont.pickle"
+    val_pickle_file:str = "/home/cse/btech/cs1210561/scratch/SA/output/clevr_run_res112_try_cont/val_data_latest_wo_112_res_cont.pickle"
+    batch_size:int = 32
+    use_saved_t5:bool = False #Change if T5 not saved
     num_workers:int = 8
 
     #Training
     mixed_precision:str = 'fp16'
     report_to:str = 'wandb'
     tracker_project_name:str = 'slot_editor'
-    work_dir:str = './editor_runs/512_4_8_4_300_4096_64_64_1_1e-4_1000_on_val_debug_112'
+    work_dir:str = './editor_runs/cont_512_4_8_4_300_4096_64_64_1_1e-4_1000_on_train_l2_clip_1_cosine_lr'
     gradient_accumulation_steps:int = 1
     use_fsdp: bool = False
     lr:float =1e-4
     num_warmup_steps:int =1000
     log_interval:int = 20
     seed:int = 0
-    num_epochs:int = 1000
+    num_epochs:int = 100
     resume_from:str = None
-    gradient_clip:float = 10.0
+    gradient_clip:float = 1.0
     save_model_steps:int = 5000
-    save_model_epochs:int = 10
+    save_model_epochs:int = 4
     pipeline_load_from:str = '/home/scai/phd/aiz228170/scratch/PixArt-sigma/output/pretrained_models/pixart_sigma_sdxlvae_T5_diffusers'
 
     #Visualization
     visualize:bool =True
     eval_sampling_steps:int = 1000
     samples_2_show: int = 8
-    image_root:str = '/home/scai/phd/aiz228170/scratch/Datasets/CIM-NLI/combined/valid' #change this if using val data for val
-    config_file:str = 'configs/our_config.py'
-    checkpoint_path: str = '/scratch/cse/btech/cs1210561/SA/output/clevr_run_res112_try/checkpoints/epoch_228_step_254999.pth'
+    train_image_root:str = '/home/scai/phd/aiz228170/scratch/Datasets/CIM-NLI/combined/train' #change if val is used for train
+    val_image_root:str = '/home/scai/phd/aiz228170/scratch/Datasets/CIM-NLI/combined/valid' 
+    config_file:str = '/home/cse/btech/cs1210561/scratch/SA/output/clevr_run_res112_try_cont/config.py'
+    checkpoint_path: str = '/home/cse/btech/cs1210561/scratch/SA/output/clevr_run_res112_try_cont/checkpoints/epoch_335_step_741204.pth'
 
 
 
@@ -463,8 +466,6 @@ def train():
             if use_saved_t5:
                 y = batch['text_emb']
                 y_mask = batch['emb_mask']
-                tokenizer = None
-                text_encoder = None
             else:
                 with torch.no_grad():
                     txt_tokens = tokenizer(batch['edit_prompt'], max_length=max_length, padding='max_length', truncation=True,
@@ -619,7 +620,7 @@ if __name__ == '__main__':
         param.requires_grad = False
 
 
-
+    tokenizer = text_encoder = None
     if not config.use_saved_t5:
         tokenizer = T5Tokenizer.from_pretrained(config.pipeline_load_from, subfolder="tokenizer")
         text_encoder = T5EncoderModel.from_pretrained(
@@ -630,8 +631,8 @@ if __name__ == '__main__':
         print(f"Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad):}")
 
 
-    train_ds = SlotDataset(config.train_pickle_file, config.image_root)
-    val_ds = SlotDataset(config.train_pickle_file, config.image_root)
+    train_ds = SlotDataset(config.train_pickle_file, config.train_image_root)
+    val_ds = SlotDataset(config.val_pickle_file, config.val_image_root)
 
     train_dl = DataLoader(train_ds, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers)
     val_dl = DataLoader(val_ds, batch_size=config.batch_size, shuffle=False, num_workers=1)
@@ -644,10 +645,8 @@ if __name__ == '__main__':
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
  
 
-    lr_scheduler = get_constant_schedule_with_warmup(
-            optimizer=optimizer,
-            num_warmup_steps=config.num_warmup_steps
-        )
+    first_cycle_steps = len(train_dataloader)*config.num_epochs
+    lr_scheduler = get_cosine_annealing_warmup_restarts(config, optimizer, first_cycle_steps = first_cycle_steps)
 
     
     if accelerator.is_main_process:
@@ -665,7 +664,7 @@ if __name__ == '__main__':
     total_steps = len(train_dl) * config.num_epochs
     use_saved_t5 = config.use_saved_t5
     max_length = config.model_max_length
-    val_image_root = config.image_root
+    val_image_root = config.val_image_root
 
 
     if config.resume_from is not None:

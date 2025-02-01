@@ -46,9 +46,16 @@ class CLEVRTEXDataset(Dataset):
 
 
 class CLEVRTExDataset_Old(Dataset):
-    def __init__(self, image_folder, image_size = 224):
-        self.image_folder = image_folder
-        self.image_files = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(('.png', '.jpg'))]
+    def __init__(self,is_validation, image_size = 224):
+        if not is_validation:
+            image_folder = "/home/cse/btech/cs1210561/scratch/CLEVRTEX_new/InternImgs"
+            self.image_files = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(('.png', '.jpg'))]
+        else:
+            image_folder = "/home/cse/btech/cs1210561/scratch/combined/valid/images"
+            self.image_files = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(('.png', '.jpg'))]
+            image_folder = "/home/cse/btech/cs1210561/scratch/combined/valid/images_c1"
+            self.image_files += [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(('.png', '.jpg'))]
+
         self.val_transform_image = transforms.Compose([transforms.Resize(size = image_size, interpolation=transforms.InterpolationMode.BILINEAR),
                                transforms.CenterCrop(size = image_size),
                                transforms.ToTensor(),
@@ -76,19 +83,19 @@ import os
 from torchvision import transforms
 import torchvision.transforms.functional as TF
 import torch
-dat = CLEVRTExDataset_Old(image_folder = "/home/cse/btech/cs1210561/scratch/CLEVRTEX_new/InternImgs")
+dat = CLEVRTExDataset_Old(is_validation = False)
 
 # dnew = CLEVRTEXDataset()
 
 
-config_file = '/home/cse/btech/cs1210561/scratch/SA/configs/our_config.py'
+config_file = '/home/cse/btech/cs1210561/scratch/SA/output/clevr_run_res112_try_cont/config.py'
 config = read_config(config_file)
 model = UOD(config)
 
 model = model.eval()
 device = "cuda:0"
 
-checkpoint_path = '/home/cse/btech/cs1210561/scratch/SA/output/clevr_run_res112/checkpoints/epoch_468_step_524999.pth'
+checkpoint_path = '/home/cse/btech/cs1210561/scratch/SA/output/clevr_run_res112_try_cont/checkpoints/epoch_335_step_741204.pth'
 checkpoint = torch.load(checkpoint_path)
 model.load_state_dict(checkpoint['state_dict'])
 model = model.eval()
@@ -124,7 +131,7 @@ for i, batch in enumerate(pbar):
     torch.cuda.empty_cache()
 
     
-output_file = "image_slots_dump.pkl"
+output_file = "/home/cse/btech/cs1210561/scratch/SA/output/clevr_run_res112_try_cont/image_slots_train_dump.pkl"
 with open(output_file, "wb") as f:
     pickle.dump(all_results, f)
 
