@@ -64,10 +64,10 @@ class TrainingConfig:
     mixed_precision:str = 'fp16'
     report_to:str = 'wandb'
     tracker_project_name:str = 'slot_editor'
-    work_dir:str = './editor_runs/cont_512_4_8_4_300_4096_64_64_1_1e-4_1000_on_train_l2_clip_1_cosine_lr'
+    work_dir:str = './editor_runs/cont_512_4_8_4_300_4096_64_64_1_4e-4_1000_on_train_l2_clip_1_cosine_lr_200ep'
     gradient_accumulation_steps:int = 1
     use_fsdp: bool = False
-    lr:float =1e-4
+    lr:float =4e-4
     num_warmup_steps:int =1000
     log_interval:int = 20
     seed:int = 0
@@ -81,9 +81,14 @@ class TrainingConfig:
     #Visualization
     visualize:bool =True
     eval_sampling_steps:int = 1000
-    samples_2_show: int = 8
+    samples_2_show: int = 16
     train_image_root:str = '/home/scai/phd/aiz228170/scratch/Datasets/CIM-NLI/combined/train' #change if val is used for train
     val_image_root:str = '/home/scai/phd/aiz228170/scratch/Datasets/CIM-NLI/combined/valid' 
+    train_json_file:str = '/home/cse/btech/cs1210561/scratch/combined/train/CLEVR_questions.json'
+    val_json_file:str = '/home/cse/btech/cs1210561/scratch/combined/valid/CLEVR_questions.json'
+    train_instr_hops:int = None     #use (0, 1, 2, or 3). If None, use all hop types.
+    val_instr_hops:int = None      #use (0, 1, 2, or 3). If None, use all hop types.
+
     config_file:str = '/home/cse/btech/cs1210561/scratch/SA/output/clevr_run_res112_try_cont/config.py'
     checkpoint_path: str = '/home/cse/btech/cs1210561/scratch/SA/output/clevr_run_res112_try_cont/checkpoints/epoch_335_step_741204.pth'
 
@@ -287,28 +292,53 @@ def slot_decoder_loss(output_slots, tgt_images, sa_model, device):
 
 
 
-
 class SlotDataset(Dataset):
-    def __init__(self, pickle_file, val_image_root):
+    def __init__(self, pickle_file, val_image_root,json_file, hop_type = None):
         with open(pickle_file, 'rb') as f:
             data = pickle.load(f)
         self.data = data
+
+        #Get the required hop data instruction
+        hop_mapping = {0:'zero', 1:'one',2:'two', 3:'three'}
+        hop_value = hop_mapping.get(hop_type, None)
+        if hop_value is None:
+            self.indices = list(range(len(data)))
+        else:
+            with open(json_file,'r') as f:
+                json_data = json.load(f)
+            template_map = {dct['image_output_filename']: dct['template_filename'] for dct in json_data['questions']}
+            hops = []
+            for dct in data:
+                image_name = dct['out_image_name']
+                if image_name in template_map:
+                    tmp_filename = template_map[image_name]
+                    hops.append(tmp_filename.split("_")[1])
+                else:
+                    print(f"Template not found for inp:{image_name}")
+                    hops.append("-1")
+            self.indices = [idx for idx in range(len(hops)) if hops[idx] == hop_value]
+            
+
+        image_size = 224
         self.img_transform = T.Compose([
-                                T.ToTensor(),
-                                T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+                                T.Resize(size = image_size, interpolation=T.InterpolationMode.BILINEAR),
+                               T.CenterCrop(size = image_size),
+                               T.ToTensor(),
+                               T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
                             ])
         self.val_image_root = val_image_root
         
 
     def __len__(self):
-        return len(self.data)
+        return len(self.indices)
 
     def __getitem__(self, index):
+        index = self.indices[index]
         dct = self.data[index]
 
-        inp_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images', dct['inp_image_name'])).convert('RGB').resize((224,224)))
+        inp_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images', dct['inp_image_name'])).convert('RGB'))
 
-        out_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images_c1', dct['out_image_name'])).convert('RGB').resize((224,224)))
+        out_image = self.img_transform(Image.open(os.path.join(self.val_image_root,'images_c1', dct['out_image_name'])).convert('RGB'))
 
         return {
             "image_name": inp_image,
@@ -369,6 +399,7 @@ def unnormalize(images):
 @torch.inference_mode()
 def log_validation(model, vis_model, val_batch, global_step, device, samples_2_show=4, text_encoder=None, tokenizer=None):
     print("Logging Visualization")
+    samples_2_show = config.samples_2_show
     torch.cuda.empty_cache()
     model = accelerator.unwrap_model(model).eval()
     vis_model = accelerator.unwrap_model(vis_model).eval()
@@ -489,7 +520,7 @@ def train():
                 optimizer.step()
                 lr_scheduler.step()
         
-            lr = lr_scheduler.get_last_lr()[0]
+            lr = lr_scheduler.get_lr()[0]
             logs = {
                 "total_loss": accelerator.gather(total_loss).mean().item(),
                 "hungarian_loss": accelerator.gather(loss_term).mean().item(),
@@ -631,8 +662,8 @@ if __name__ == '__main__':
         print(f"Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad):}")
 
 
-    train_ds = SlotDataset(config.train_pickle_file, config.train_image_root)
-    val_ds = SlotDataset(config.val_pickle_file, config.val_image_root)
+    train_ds = SlotDataset(config.train_pickle_file, config.train_image_root,config.train_json_file, config.train_instr_hops)
+    val_ds = SlotDataset(config.val_pickle_file, config.val_image_root,config.val_json_file, config.val_instr_hops)
 
     train_dl = DataLoader(train_ds, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers)
     val_dl = DataLoader(val_ds, batch_size=config.batch_size, shuffle=False, num_workers=1)
@@ -645,7 +676,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
  
 
-    first_cycle_steps = len(train_dataloader)*config.num_epochs
+    first_cycle_steps = len(train_dl)*config.num_epochs
     lr_scheduler = get_cosine_annealing_warmup_restarts(config, optimizer, first_cycle_steps = first_cycle_steps)
 
     
